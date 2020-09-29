@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/d24wang/go-whack-a-rabbit/rmq"
 )
@@ -54,7 +55,7 @@ func (pr *PublisherRunner) SetUpPublishers() ([]string, error) {
 }
 
 // Run will start all publishers to publisher messages
-func (pr *PublisherRunner) Run() error {
+func (pr *PublisherRunner) Run(sequential bool) error {
 	if pr.messageNumber < 1 {
 		return fmt.Errorf("Invalide number of messages is configured: %d", pr.messageNumber)
 	}
@@ -64,6 +65,7 @@ func (pr *PublisherRunner) Run() error {
 	}
 
 	pubChan := make(chan *rmq.PublishStats, len(pr.publishers))
+	startTime := time.Now()
 	for _, pub := range pr.publishers {
 		go func(pub *rmq.Publisher) {
 			stats, err := pub.Publish(pr.messageNumber, pr.messageSize)
@@ -72,12 +74,19 @@ func (pr *PublisherRunner) Run() error {
 			}
 			pubChan <- stats
 		}(pub)
+
+		if sequential {
+			fmt.Println(<-pubChan)
+		}
 	}
 
-	for i := 0; i < len(pr.publishers); i++ {
-		fmt.Println(<-pubChan)
+	if !sequential {
+		for i := 0; i < len(pr.publishers); i++ {
+			fmt.Println(<-pubChan)
+		}
 	}
 	close(pubChan)
+	fmt.Printf("Total run time is %v\n", time.Since(startTime))
 
 	return nil
 }
