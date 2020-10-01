@@ -16,6 +16,7 @@ type Consumer struct {
 	chann     *amqp.Channel
 	queueName string
 	asserted  bool
+	rate      int
 }
 
 // CreateConsumer creates a consumer
@@ -25,6 +26,12 @@ func CreateConsumer(ctx context.Context, queueName, queueURL string) *Consumer {
 		queueURL:  queueURL,
 		queueName: queueName,
 	}
+}
+
+// SetRate sets the pulling maximum pulling rate (# of messages per second),
+// consumer will pull as fast as it can when rate is 0 or negative
+func (consumer *Consumer) SetRate(rate int) {
+	consumer.rate = rate
 }
 
 // AssertQueue will connect to a RMQ queue by the given queue name
@@ -59,7 +66,7 @@ func (consumer *Consumer) AssertQueue() error {
 
 // Consume starts to consume at most n messages from the queue
 func (consumer *Consumer) Consume(n int) (*ConsumeStats, error) {
-	messageChan, err := consumer.chann.Consume(consumer.queueName, "", true, false, false, false, nil)
+	messageChan, err := consumer.chann.Consume(consumer.queueName, "", false, false, false, false, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,12 +79,18 @@ func (consumer *Consumer) Consume(n int) (*ConsumeStats, error) {
 		stats.Stop()
 	}()
 
+	limitRate := consumer.rate > 0
+	var pullInterval time.Duration
+	if limitRate {
+		pullInterval = time.Second / time.Duration(consumer.rate)
+	}
 	timer := createTimer(cancelCtx, time.Second*30)
 	timeout := timer.start()
 	stats.Start()
 
 	var counter, delta int
 	for {
+		pullStart := time.Now()
 		select {
 		case <-timeout:
 			if delta == 0 {
@@ -86,12 +99,19 @@ func (consumer *Consumer) Consume(n int) (*ConsumeStats, error) {
 			delta = 0
 		case <-consumer.ctx.Done():
 			return stats, nil
-		case <-messageChan:
+		case delivery := <-messageChan:
+			delivery.Ack(false)
 			counter++
 			delta++
 			stats.IncrementMessage()
 			if counter == n {
 				return stats, nil
+			}
+			if limitRate {
+				timeSpent := time.Since(pullStart)
+				if timeSpent < pullInterval {
+					time.Sleep(pullInterval - timeSpent)
+				}
 			}
 		}
 	}

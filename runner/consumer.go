@@ -45,6 +45,13 @@ func (cr *ConsumerRunner) SetUpConsumers() error {
 	return nil
 }
 
+// SetRate sets the pulling rate for all consumers
+func (cr *ConsumerRunner) SetRate(rate int) {
+	for _, con := range cr.consumers {
+		con.SetRate(rate)
+	}
+}
+
 // Run starts draining
 func (cr *ConsumerRunner) Run() error {
 	defer cr.cancel()
